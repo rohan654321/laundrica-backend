@@ -1,10 +1,9 @@
+// src/services/marketing.service.js
 const geoip = require('geoip-lite');
-const useragent = require('useragent');
 const logger = require('../utils/logger');
 
 class MarketingService {
     constructor() {
-        // Cache geoip lookups to reduce repeated lookups
         this.geoCache = new Map();
     }
 
@@ -26,6 +25,57 @@ class MarketingService {
         };
     }
 
+    parseUserAgent(userAgentString) {
+        if (!userAgentString) {
+            return { name: 'Unknown', version: '', os: 'Unknown' };
+        }
+
+        const ua = userAgentString.toLowerCase();
+        let name = 'Unknown';
+        let version = '';
+        let os = 'Unknown';
+
+        if (ua.includes('chrome') && !ua.includes('edg')) {
+            name = 'Chrome';
+            const match = ua.match(/chrome\/(\d+\.\d+\.\d+\.\d+)/);
+            if (match) version = match[1];
+        } else if (ua.includes('safari') && !ua.includes('chrome')) {
+            name = 'Safari';
+            const match = ua.match(/version\/(\d+\.\d+\.\d+)/);
+            if (match) version = match[1];
+        } else if (ua.includes('firefox')) {
+            name = 'Firefox';
+            const match = ua.match(/firefox\/(\d+\.\d+)/);
+            if (match) version = match[1];
+        } else if (ua.includes('edg')) {
+            name = 'Edge';
+            const match = ua.match(/edg\/(\d+\.\d+\.\d+\.\d+)/);
+            if (match) version = match[1];
+        } else if (ua.includes('opera') || ua.includes('opr')) {
+            name = 'Opera';
+            const match = ua.match(/opr\/(\d+\.\d+\.\d+)/);
+            if (match) version = match[1];
+        }
+
+        if (ua.includes('windows')) {
+            os = 'Windows';
+            if (ua.includes('windows nt 10.0')) os = 'Windows 10';
+            else if (ua.includes('windows nt 6.3')) os = 'Windows 8.1';
+            else if (ua.includes('windows nt 6.2')) os = 'Windows 8';
+            else if (ua.includes('windows nt 6.1')) os = 'Windows 7';
+        } else if (ua.includes('mac os')) {
+            os = 'macOS';
+        } else if (ua.includes('linux')) {
+            os = 'Linux';
+        } else if (ua.includes('android')) {
+            os = 'Android';
+        } else if (ua.includes('ios') || ua.includes('iphone') || ua.includes('ipad')) {
+            os = 'iOS';
+        }
+
+        return { name, version, os };
+    }
+
     getBrowserInfo(userAgentString, headers) {
         if (!userAgentString) {
             return {
@@ -38,13 +88,13 @@ class MarketingService {
             };
         }
 
-        const agent = useragent.parse(userAgentString);
+        const parsed = this.parseUserAgent(userAgentString);
         const deviceType = this.detectDeviceType(userAgentString);
 
         return {
-            name: agent.family || '',
-            version: agent.toVersion() || '',
-            os: agent.os.family || '',
+            name: parsed.name || '',
+            version: parsed.version || '',
+            os: parsed.os || '',
             deviceType: deviceType,
             userAgent: userAgentString || '',
             language: headers['accept-language'] || '',
@@ -61,7 +111,7 @@ class MarketingService {
     }
 
     getGeoInfo(ip) {
-        if (!ip || ip === '::1' || ip === '127.0.0.1') {
+        if (!ip || ip === '::1' || ip === '127.0.0.1' || ip === 'localhost') {
             return {
                 ip: ip || '',
                 country: '',
@@ -73,7 +123,6 @@ class MarketingService {
             };
         }
 
-        // Check cache
         if (this.geoCache.has(ip)) {
             return this.geoCache.get(ip);
         }
@@ -91,9 +140,7 @@ class MarketingService {
                 timezone: geo?.timezone || '',
             };
 
-            // Cache the result
             this.geoCache.set(ip, result);
-
             return result;
         } catch (error) {
             logger.error('GeoIP lookup error:', error);
@@ -118,11 +165,9 @@ class MarketingService {
     }
 
     getClientIP(req) {
-        // Trust the X-Forwarded-For header if present (for proxies)
         const forwarded = req.headers['x-forwarded-for'];
         if (forwarded) {
             const ips = forwarded.split(',').map(ip => ip.trim());
-            // Get the first IP (client IP)
             return ips[0] || req.connection.remoteAddress || req.ip || '';
         }
 
@@ -135,7 +180,6 @@ class MarketingService {
             const headers = req.headers || {};
             const userAgent = headers['user-agent'] || '';
 
-            // Get client IP - never trust frontend
             const ip = this.getClientIP(req);
 
             const marketingData = {
@@ -144,8 +188,10 @@ class MarketingService {
                 geo: this.getGeoInfo(ip),
                 browser: this.getBrowserInfo(userAgent, headers),
                 page: this.getPageInfo(req),
-                sessionId: req.headers['x-session-id'] || req.params.sessionId || '',
+                sessionId: headers['x-session-id'] || req.params.sessionId || '',
                 timestamp: new Date(),
+                // Add cookie consent data if available
+                consent: headers['x-cookie-consent'] ? JSON.parse(headers['x-cookie-consent']) : null,
             };
 
             logger.debug('Marketing data collected:', {
@@ -153,12 +199,12 @@ class MarketingService {
                 utmSource: marketingData.utm.source,
                 country: marketingData.geo.country,
                 deviceType: marketingData.browser.deviceType,
+                hasConsent: !!marketingData.consent,
             });
 
             return marketingData;
         } catch (error) {
             logger.error('Error collecting marketing data:', error);
-            // Return empty marketing data to not break the flow
             return {
                 utm: { source: '', medium: '', campaign: '', term: '', content: '' },
                 clickIds: { gclid: '', fbclid: '', msclkid: '' },
@@ -167,11 +213,11 @@ class MarketingService {
                 page: { referrer: '', landingPage: '', currentPage: '' },
                 sessionId: '',
                 timestamp: new Date(),
+                consent: null,
             };
         }
     }
 
-    // Format marketing data for Zoho webhook
     formatForZoho(marketingData) {
         return {
             utm_source: marketingData.utm.source || '',
@@ -200,6 +246,11 @@ class MarketingService {
             current_page: marketingData.page.currentPage || '',
             session_id: marketingData.sessionId || '',
             timestamp: marketingData.timestamp ? new Date(marketingData.timestamp).toISOString() : '',
+            // Cookie consent data
+            cookie_consent_given: marketingData.consent ? 'true' : 'false',
+            cookie_analytics_consent: marketingData.consent?.analytics ? 'true' : 'false',
+            cookie_marketing_consent: marketingData.consent?.marketing ? 'true' : 'false',
+            cookie_performance_consent: marketingData.consent?.performance ? 'true' : 'false',
         };
     }
 }

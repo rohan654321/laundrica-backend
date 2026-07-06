@@ -65,6 +65,7 @@ const queues = {
     zohoWebhook: createQueue('zoho-webhook'),
     emailNotifications: createQueue('email-notifications'),
     orderCleanup: createQueue('order-cleanup'),
+    zohoAnalytics: createQueue('zoho-analytics'),
 };
 
 module.exports = queues;

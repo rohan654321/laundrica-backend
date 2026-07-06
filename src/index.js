@@ -94,6 +94,8 @@ const productRoutes = require("./routes/product.routes");
 const serviceRoutes = require("./routes/service.routes");
 const contactRoutes = require("./routes/contact.routes");
 const webhookRoutes = require("./routes/webhook.routes");
+const analyticsRoutes = require('./routes/analytics.routes');
+
 
 app.use("/api/orders", orderRoutes);
 app.use("/api/cart", cartRoutes);
@@ -101,6 +103,8 @@ app.use("/api/products", productRoutes);
 app.use("/api/services", serviceRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/webhook", webhookRoutes);
+app.use('/api/analytics', analyticsRoutes);
+
 
 // ==============================
 // 404 Handler
